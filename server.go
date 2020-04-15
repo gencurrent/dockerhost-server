@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
-	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -13,43 +11,27 @@ import (
 	Handlers "./handlers"
 )
 
+
+var ClientData map[string]interface{}
+
 var address = flag.String("addr", "0.0.0.0:8000", "http service address")
 
 var upgrader = websocket.Upgrader{}
-
-func handleCommands(command string, arguments interface{}) (string, error) {
-	var result string
-	switch command {
-	case `docker.image`:
-		res, err := Handlers.DockerList()
-		if err != nil {
-			return "", err
-		}
-		result = res
-
-	case `status`:
-		res, err := Handlers.RequestToPullImage()
-		if err != nil {
-			return "", err
-		}
-		result = res
-
-	}
-	return result, nil
-}
 
 // MakeRequest: Создать запрос клиенту
 func MakeRequest(i int) (string, error) {
 	var result string
 	var err error
 	if (i+1)%5 != 0 {
-		result, err = Handlers.Idle()
+		// Request a status
+		result, err = Handlers.Status()
 		if err != nil {
 			log.Printf("Could not get the IDLE ;)")
 			panic(err)
-		}
+        }
+        // ClientData[images]
 	} else {
-		result, err = Handlers.RequestToPullImage()
+		result, err = Handlers.RequestToPullImage([]string{"postgres"})
 		if err != nil {
 			log.Printf("Could not get the IDLE ;)")
 			panic(err)
@@ -57,24 +39,6 @@ func MakeRequest(i int) (string, error) {
 	}
 
 	return result, nil
-}
-
-func parseRPCInterface(message string) (string, interface{}, error) {
-	log.Printf("The message ot be parsed = %s\n", message)
-	mp := make(map[string]interface{})
-	err := json.Unmarshal([]byte(message), &mp)
-
-	if err != nil {
-		log.Printf("The error is :: %s", err)
-		return "", "", err
-	}
-	log.Printf("The parsed result: %s\n", mp)
-	command := fmt.Sprintf("%v", mp["request"])
-	arguments := mp["arguments"]
-	log.Printf("The command: %s\n", command)
-	log.Printf("The arguments: %s\n", arguments)
-
-	return command, arguments, nil
 }
 
 func rpc(w http.ResponseWriter, r *http.Request) {
@@ -114,19 +78,7 @@ func rpc(w http.ResponseWriter, r *http.Request) {
 
 		i++
 
-		// toReturn := fmt.Sprintf("Command: %s", functionResult)
-
 	}
-	// for {
-	// 	log.Printf("receive: %s", message)
-	// 	log.Printf("Parsing the message")
-	// 	command, arguments, err := parseRPCInterface(string(message))
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	log.Printf("Command returned: %s", command)
-	// 	log.Printf("Arguments returned: %v", arguments)
-	// }
 
 }
 
