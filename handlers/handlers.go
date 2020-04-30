@@ -1,3 +1,7 @@
+/***
+The handlers for the every request type from server to a client
+*/
+
 package handlers
 
 import (
@@ -7,29 +11,12 @@ import (
 	"net/http"
 
 	Types "../types"
+	Utils "../utils"
 )
-
-// Разница двух строк
-func difference(a, b []string) []string {
-
-	target := map[string]bool{}
-	for _, x := range b {
-		target[x] = true
-	}
-
-	result := []string{}
-	for _, x := range a {
-		if _, ok := target[x]; !ok {
-			result = append(result, x)
-		}
-	}
-
-	return result
-}
 
 var HostImageList []string
 
-func updateDockerList() {
+func UpdateLocalImageList() {
 
 	resp, err := http.Get("http://localhost:5000/v2/_catalog")
 	if err != nil {
@@ -53,22 +40,30 @@ func updateDockerList() {
 	log.Printf("updateDockerList.Result :: %v", HostImageList)
 }
 
-//
-func DockerList() (string, error) {
-	updateDockerList()
+func RequestToRunImage(imageName string) (string, error) {
 	req := Types.RequestStructure{
-		"Image.List.Save",
+		`Image.Run`,
 		map[string]interface{}{
-			"list": HostImageList,
+			"Image.Name": imageName,
 		},
 	}
 	return req.Marshal()
 }
 
-// RequestToPullImage a client to push images
+func RequestToStopContainer(containerID string) (string, error) {
+	req := Types.RequestStructure{
+		`Container.Stop`,
+		map[string]interface{}{
+			"Container.ID": containerID,
+		},
+	}
+	return req.Marshal()
+}
+
+// RequestToPullImage a client to pull images
 func RequestToPullImage(imageList []string) (string, error) {
-	updateDockerList()
-	diff := difference(HostImageList, imageList)
+	UpdateLocalImageList()
+	diff := Utils.Difference(HostImageList, imageList)
 	req := Types.RequestStructure{
 		`Image.Pull`,
 		map[string]interface{}{
@@ -78,6 +73,7 @@ func RequestToPullImage(imageList []string) (string, error) {
 	return req.Marshal()
 }
 
+// Status : check the Client status
 func Status() (string, error) {
 	request := Types.RequestStructure{
 		Request: "Status",
