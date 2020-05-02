@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	
+
 	"github.com/docker/docker/api/types"
 
 	uuid "github.com/satori/go.uuid"
@@ -14,7 +14,7 @@ import (
 
 // Запрос от сервера
 type RequestStructure struct {
-	Request   string                 `json:"request"`
+	Name      string                 `json:"request"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
 
@@ -31,12 +31,13 @@ const (
 
 // Client structure defines the websocket client fields
 type Client struct {
-	IP            string
-	Port          uint16
-	UUID          uuid.UUID
-	ImageList     []types.ImageSummary
-	ContainerList []types.Container
-	Status        uint8
+	UUID          uuid.UUID            `json:"uuid"`
+	IP            string               `json:"ip"`
+	Port          uint16               `json:"port"`
+	ImageList     []types.ImageSummary `json:"imageList"`
+	ContainerList []types.Container    `json:"containerList"`
+	Status        uint8                `json:"status"`
+	RequestQueue  []RequestStructure   `json:"requestQueue"`
 }
 
 // ClientList - list of clients with methods
@@ -81,26 +82,61 @@ func NewClient(ip string, port string) *Client {
 	return &client
 }
 
+func (client *Client) PushRequestStructure(rs *RequestStructure) (*RequestStructure, error) {
+	client.RequestQueue = append(client.RequestQueue, *rs)
+	rs = &client.RequestQueue[len(client.RequestQueue)-1]
+	return rs, nil
+}
+
+func (client *Client) PopRequestStructure() *RequestStructure {
+	if len(client.RequestQueue) == 0 {
+		return nil
+	}
+	rs := client.RequestQueue[0]
+	client.RequestQueue = client.RequestQueue[1:len(client.RequestQueue)]
+	return &rs
+}
+
 // ByAddress - get client by his IP and port addresses
-func (cm *ClientMap) ByAddress(ip *string, port uint16) (*Client, error) {
+func (cm *ClientMap) ByAddress(ip string, port uint16) (*Client, error) {
 	var clientFound *Client
 	clientFound = nil
-	for _, client := range cm.ClientList {
-		if client.IP == *ip && client.Port == port {
-			clientFound = &client
+	log.Printf("The client list = %v", cm.ClientList)
+	for idx, client := range cm.ClientList {
+		if client.IP == ip && client.Port == port {
+			clientFound = &cm.ClientList[idx]
+			break
 		}
 	}
 	if clientFound == nil {
-		return nil, errors.New(fmt.Sprintf("Could not find a client with address %v:%v", *ip, port))
+		return nil, errors.New(fmt.Sprintf("Could not find a client with address %v:%v", ip, port))
 	}
 	return clientFound, nil
 }
 
-func (cm *ClientMap) AddClient(c Client) (*Client, error) {
-	clientFound, err := cm.ByAddress(&c.IP, c.Port)
+// ByAddress - get client by his IP and port addresses
+func (cm *ClientMap) ByUUID(uuid uuid.UUID) (*Client, error) {
+	var clientFound *Client
+	clientFound = nil
+	log.Printf("The client list = %v", cm.ClientList)
+	for idx, client := range cm.ClientList {
+		if client.UUID == uuid {
+			clientFound = &cm.ClientList[idx]
+			break
+		}
+	}
+	if clientFound == nil {
+		return nil, errors.New(fmt.Sprintf("Could not find a client with UUID %v", uuid))
+	}
+	return clientFound, nil
+}
+
+func (cm *ClientMap) AddClient(c *Client) (*Client, error) {
+	clientFound, err := cm.ByAddress(c.IP, c.Port)
 	if err != nil {
-		cm.ClientList = append(cm.ClientList, c)
-		return &c, nil
+		cm.ClientList = append(cm.ClientList, *c)
+		c = &cm.ClientList[len(cm.ClientList)-1]
+		return c, nil
 	}
 	return clientFound, err
 }

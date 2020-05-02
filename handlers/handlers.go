@@ -50,6 +50,29 @@ func RequestToRunImage(imageName string) (string, error) {
 	return req.Marshal()
 }
 
+// RequestToPauseContainer requests a client to delete a container
+func RequestToStartContainer(containerID string) (string, error) {
+	req := Types.RequestStructure{
+		`Container.Start`,
+		map[string]interface{}{
+			"Container.ID": containerID,
+		},
+	}
+	return req.Marshal()
+}
+
+// RequestToPauseContainer requests a client to delete a container
+func RequestToPauseContainer(containerID string) (string, error) {
+	req := Types.RequestStructure{
+		`Container.Pause`,
+		map[string]interface{}{
+			"Container.ID": containerID,
+		},
+	}
+	return req.Marshal()
+}
+
+// RequestToStopContainer requests a client to stop a container
 func RequestToStopContainer(containerID string) (string, error) {
 	req := Types.RequestStructure{
 		`Container.Stop`,
@@ -60,6 +83,18 @@ func RequestToStopContainer(containerID string) (string, error) {
 	return req.Marshal()
 }
 
+// RequestToRemoveContainer requests a client to delete a container
+func RequestToRemoveContainer(containerID string) (string, error) {
+	req := Types.RequestStructure{
+		`Container.Remove`,
+		map[string]interface{}{
+			"Container.ID": containerID,
+		},
+	}
+	return req.Marshal()
+}
+
+// TODO: REFACTOR THIS EVILNESS
 // RequestToPullImage a client to pull images
 func RequestToPullImage(imageList []string) (string, error) {
 	UpdateLocalImageList()
@@ -76,7 +111,7 @@ func RequestToPullImage(imageList []string) (string, error) {
 // Status : check the Client status
 func Status() (string, error) {
 	request := Types.RequestStructure{
-		Request: "Status",
+		Name: "Status",
 		Arguments: map[string]interface{}{
 			"put": []string{"Image.List", "Container.List"},
 		},

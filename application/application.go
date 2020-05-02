@@ -1,3 +1,7 @@
+/*
+	The application essential variables
+*/
+
 package application
 
 import (

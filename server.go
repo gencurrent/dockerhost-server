@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	uuid "github.com/satori/go.uuid"
 
 	Application "./application"
 	FeedbackHandlers "./feedbackhandlers"
@@ -23,25 +25,27 @@ var address = flag.String("addr", "0.0.0.0:8000", "http service address")
 
 var upgrader = websocket.Upgrader{}
 
-// MakeRequest: Make up a Request to the connected client
-func MakeRequest(i int, client *Types.Client) (string, error) {
+// PopRequest: Pop a RequestStructure from the client's request queue
+func PopRequest(client *Types.Client) (string, error) {
+
+	log.Printf("The request queue = %v", client.RequestQueue)
+	RequestDefault := Handlers.Status
+
+	request := client.PopRequestStructure()
+	if request == nil {
+		return RequestDefault()
+	}
 	var result string
 	var err error
-	if (i+1)%10 == 0 {
+
+	if request.Name == "Image.Run" {
 		// result, err = Handlers.RequestToRunImage(client.ImageList[1])
-		result, err = Handlers.RequestToStopContainer(client.ContainerList[0].ID)
+		result, err = Handlers.RequestToRunImage(string(request.Arguments["Image.Name"].(string)))
 		if err != nil {
-			log.Printf("Could not get the IDLE ;)")
+			log.Printf("Could not process a request %s", request.Name)
 			panic(err)
 		}
-	} else if (i+1)%5 == 0 {
-		// result, err = Handlers.RequestToRunImage(client.ImageList[1])
-		result, err = Handlers.RequestToRunImage(client.ImageList[0].RepoTags[0])
-		if err != nil {
-			log.Printf("Could not get the IDLE ;)")
-			panic(err)
-		}
-	} else if (i+1)%2 == 0 {
+	} else if request.Name == "Image.Pull" {
 		// TODO: this is just WRONG
 		var clientImageTags = []string{}
 		for _, clientImage := range client.ImageList {
@@ -49,17 +53,43 @@ func MakeRequest(i int, client *Types.Client) (string, error) {
 		}
 		result, err = Handlers.RequestToPullImage(clientImageTags)
 		if err != nil {
-			log.Printf("Could not get the IDLE ;)")
+			log.Printf("Could not process a request %s", request.Name)
 			panic(err)
 		}
-	} else {
+	} else if request.Name == "Container.Start" {
+		result, err = Handlers.RequestToStartContainer(request.Arguments["Container.ID"].(string))
+		if err != nil {
+			log.Printf("Could not process a request %s", request.Name)
+			panic(err)
+		}
+	} else if request.Name == "Container.Pause" {
+		result, err = Handlers.RequestToPauseContainer(request.Arguments["Container.ID"].(string))
+		if err != nil {
+			log.Printf("Could not process a request %s", request.Name)
+			panic(err)
+		}
+	} else if request.Name == "Container.Stop" {
+		result, err = Handlers.RequestToStopContainer(request.Arguments["Container.ID"].(string))
+		if err != nil {
+			log.Printf("Could not process a request %s", request.Name)
+			panic(err)
+		}
+	} else if request.Name == "Container.Remove" {
+		result, err = Handlers.RequestToRemoveContainer(request.Arguments["Container.ID"].(string))
+		if err != nil {
+			log.Printf("Could not process a request %s", request.Name)
+			panic(err)
+		}
+	} else if request.Name == "Status" {
 		// Request a status
 		result, err = Handlers.Status()
 		if err != nil {
-			log.Printf("Could not get the IDLE ;)")
+			log.Printf("Could not process a request %s", request.Name)
 			panic(err)
 		}
-		// ClientData[images]
+	} else {
+		log.Printf("Could not process a request %s", request.Name)
+		return "", nil
 	}
 
 	return result, nil
@@ -73,7 +103,7 @@ func rpc(w http.ResponseWriter, r *http.Request) {
 	clientIP, clientPort := splitted[0], splitted[1]
 
 	newClient := Types.NewClient(clientIP, clientPort)
-	client, clientAddError := Application.ClientMap.AddClient(*newClient)
+	client, clientAddError := Application.ClientMap.AddClient(newClient)
 	if clientAddError != nil {
 		log.Fatalf("The client error: %s", clientAddError)
 	}
@@ -94,7 +124,7 @@ func rpc(w http.ResponseWriter, r *http.Request) {
 	for {
 		// Step 2: Make up a request to client
 		// TODO: Wrap all the requests and responses to Request type and Response Type
-		functionResult, err := MakeRequest(i, client)
+		functionResult, err := PopRequest(client)
 		if err != nil {
 			log.Printf("The wrong function result: %s", err)
 			panic(err)
@@ -110,11 +140,17 @@ func rpc(w http.ResponseWriter, r *http.Request) {
 		// Step 4: Read the feedback on the request from the client
 		_, clientResponseBody, err := c.ReadMessage()
 		if err != nil {
+			for id, cmClient := range Application.ClientMap.ClientList {
+				if client.Port == cmClient.Port && client.IP == cmClient.IP {
+					// delete(Application.ClientMap.ClientList[id])
+					log.Printf("Id", id)
+				}
+			}
 			log.Print("Reading message error:", err)
 			break
 		}
-		// log.Printf("Read a message from the client: %s", string(clientResponseBody))
 
+		// Step 5: Handle the feedback from the client
 		FeedbackHandlers.HandleClientFeedback(client, clientResponseBody)
 		i++
 
@@ -133,8 +169,76 @@ var ListOfClients = func(w http.ResponseWriter, r *http.Request) {
 	w.Write(js)
 }
 
+var GetClient = func(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	uuidParsed, err := uuid.FromString(vars["uuid"])
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Wrong UUID supplied"))
+		return
+	}
+	client, err := Application.ClientMap.ByUUID(uuidParsed)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(fmt.Sprintf("404 - The client is not found by UUID: %s", uuidParsed)))
+		return
+	}
+	js, err := json.Marshal(client)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("500 - Internal Server error"))
+		return
+	}
+	w.Write(js)
+}
+
 var ClientAddRequest = func(w http.ResponseWriter, r *http.Request) {
 
+	vars := mux.Vars(r)
+	uuidParsed, err := uuid.FromString(vars["uuid"])
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Wrong UUID supplied"))
+		return
+	}
+	client, err := Application.ClientMap.ByUUID(uuidParsed)
+	log.Printf("THE client = %v", client)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(fmt.Sprintf("404 - The client is not found by UUID: %s", uuidParsed)))
+		return
+	}
+
+	rStructure := Types.RequestStructure{}
+	// Body decoding
+	var metaRS interface{}
+	decoder := json.NewDecoder(r.Body)
+	err = decoder.Decode(&metaRS)
+	if err != nil {
+		panic(err)
+	}
+	metaRSMap, ok := metaRS.(map[string]interface{})
+	if !ok {
+		log.Printf("The error converting RequestStructure: %s", err)
+	}
+	reqName, ok := metaRSMap["name"].(string)
+	if !ok {
+		log.Printf(`Could not parse the reqName, ok := strstr["name"].(string)`)
+	}
+	rStructure.Name = reqName
+	rStructure.Arguments = make(map[string]interface{})
+	log.Printf("The name = %s", reqName)
+	// reqArgs, ok := strstr["arguments"].(map[string]interface{})
+	for _, v := range metaRSMap["arguments"].([]interface{}) {
+		intt := v.(map[string]interface{})
+		log.Printf("Found the arg : %v", intt)
+		for k, v := range intt {
+			rStructure.Arguments[k] = v
+		}
+	}
+
+	client.PushRequestStructure(&rStructure)
+	w.Write([]byte("Ok"))
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +254,8 @@ func main() {
 	r.HandleFunc("/", home)
 	r.HandleFunc("/rpc", rpc)
 	r.HandleFunc("/api/client", ListOfClients)
+	r.HandleFunc("/api/client/{uuid}", GetClient)
+	r.HandleFunc("/api/client/{uuid}/request-queue", ClientAddRequest)
 	http.Handle("/", r)
 
 	log.Printf("DockerHost Server -> started at address %v", *address)

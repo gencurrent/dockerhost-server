@@ -18,7 +18,6 @@ func HandleClientFeedback(client *Types.Client, clientResponseBody []byte) error
 	if respError != nil {
 		log.Printf("Error in response unmarshaling")
 	}
-	log.Printf("The client response =  %s : %v", response.Request, response.Arguments)
 
 	var err error
 	err = nil
@@ -38,14 +37,19 @@ func HandleClientFeedback(client *Types.Client, clientResponseBody []byte) error
 func HandleStatusFeedback(client *Types.Client, arguments interface{}) error {
 	args := arguments.(map[string]interface{})
 
+	// log.Printf("Handling the client's status feedback")
+	// log.Printf("The client value = %v", *client)
 	// Update the image list
 	client.ImageList = []types.ImageSummary{}
 	if args["Image.List"] != nil {
 		imageList := args["Image.List"].([]interface{})
 		for _, img := range imageList {
-			var image types.ImageSummary
-			mapstructure.Decode(img, &image)
-			client.ImageList = append(client.ImageList, image)
+			var imageSummary types.ImageSummary
+			err := mapstructure.Decode(img, &imageSummary)
+			if err != nil {
+				panic(err)
+			}
+			client.ImageList = append(client.ImageList, imageSummary)
 		}
 	}
 
@@ -55,7 +59,10 @@ func HandleStatusFeedback(client *Types.Client, arguments interface{}) error {
 		containerList := args["Container.List"].([]interface{})
 		for _, container := range containerList {
 			var cont types.Container
-			mapstructure.Decode(container, &cont)
+			err := mapstructure.Decode(container, &cont)
+			if err != nil {
+				panic(err)
+			}
 			client.ContainerList = append(client.ContainerList, cont)
 		}
 	}
