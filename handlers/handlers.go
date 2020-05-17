@@ -11,10 +11,9 @@ import (
 	"net/http"
 
 	Types "../types"
-	Utils "../utils"
 )
 
-var HostImageList []string
+var HostImageList = []string{}
 
 func UpdateLocalImageList() {
 
@@ -40,11 +39,34 @@ func UpdateLocalImageList() {
 	log.Printf("updateDockerList.Result :: %v", HostImageList)
 }
 
+// RequestToPullImage a client to pull images
+func RequestToPullImage(imageTag string) (string, error) {
+	UpdateLocalImageList()
+	// diff := Utils.Difference(HostImageList, imageList)
+	req := Types.RequestStructure{
+		`Image.Pull`,
+		map[string]interface{}{
+			"Image.Tag": imageTag,
+		},
+	}
+	return req.Marshal()
+}
+
 func RequestToRunImage(imageName string) (string, error) {
 	req := Types.RequestStructure{
 		`Image.Run`,
 		map[string]interface{}{
-			"Image.Name": imageName,
+			"Image.Tag": imageName,
+		},
+	}
+	return req.Marshal()
+}
+
+func RequestToRemoveImage(imageID string) (string, error) {
+	req := Types.RequestStructure{
+		`Image.Remove`,
+		map[string]interface{}{
+			"Image.ID": imageID,
 		},
 	}
 	return req.Marshal()
@@ -89,20 +111,6 @@ func RequestToRemoveContainer(containerID string) (string, error) {
 		`Container.Remove`,
 		map[string]interface{}{
 			"Container.ID": containerID,
-		},
-	}
-	return req.Marshal()
-}
-
-// TODO: REFACTOR THIS EVILNESS
-// RequestToPullImage a client to pull images
-func RequestToPullImage(imageList []string) (string, error) {
-	UpdateLocalImageList()
-	diff := Utils.Difference(HostImageList, imageList)
-	req := Types.RequestStructure{
-		`Image.Pull`,
-		map[string]interface{}{
-			"List": diff,
 		},
 	}
 	return req.Marshal()

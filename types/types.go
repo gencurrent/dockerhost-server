@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 
 	"github.com/docker/docker/api/types"
 
@@ -24,6 +25,11 @@ type ResponseStructure struct {
 	Arguments map[string]interface{} `json:"arguments"`
 }
 
+// ApiResponseError: the response in case of error
+type ApiResponseError struct {
+	Error string `json:"error"`
+}
+
 const (
 	ClientActive  uint8 = iota
 	ClientPassive uint8 = iota
@@ -31,20 +37,23 @@ const (
 
 // Client structure defines the websocket client fields
 type Client struct {
-	UUID          uuid.UUID            `json:"uuid"`
-	IP            string               `json:"ip"`
-	Port          uint16               `json:"port"`
-	ImageList     []types.ImageSummary `json:"imageList"`
-	ContainerList []types.Container    `json:"containerList"`
-	Status        uint8                `json:"status"`
-	RequestQueue  []RequestStructure   `json:"requestQueue"`
+	UUID              uuid.UUID            `json:"uuid"`
+	IP                string               `json:"ip"`
+	Port              uint16               `json:"port"`
+	ImageList         []types.ImageSummary `json:"imageList"`
+	ContainerList     []types.Container    `json:"containerList"`
+	Status            uint8                `json:"status"`
+	RequestQueue      []RequestStructure   `json:"requestQueue"`
+	RequestQueueMutex sync.Mutex           `json:"-"`
 }
 
 // ClientList - list of clients with methods
 type ClientMap struct {
-	ClientList []Client
+	ClientList      []Client
+	ClientListMutex sync.Mutex `json:"-"`
 }
 
+// Config to run the client application
 type Config struct {
 	RegistryURL string `json:"registryURL"`
 }
@@ -75,9 +84,10 @@ func NewClient(ip string, port string) *Client {
 	}
 	clientPort := uint16(clientPortParsed)
 	client := Client{
-		IP:   ip,
-		Port: clientPort,
-		UUID: uuid.Must(uuid.NewV4()),
+		IP:           ip,
+		Port:         clientPort,
+		UUID:         uuid.Must(uuid.NewV4()),
+		RequestQueue: []RequestStructure{},
 	}
 	return &client
 }

@@ -5,14 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"strings"
 
-	// "reflect"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/rs/cors"
 	uuid "github.com/satori/go.uuid"
 
 	Application "./application"
@@ -21,9 +21,11 @@ import (
 	Types "./types"
 )
 
-var address = flag.String("addr", "0.0.0.0:8000", "http service address")
+var address = flag.String("addr", ":8000", "http service address")
 
-var upgrader = websocket.Upgrader{}
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { log.Print("New connection detected"); return true },
+}
 
 // PopRequest: Pop a RequestStructure from the client's request queue
 func PopRequest(client *Types.Client) (string, error) {
@@ -39,19 +41,21 @@ func PopRequest(client *Types.Client) (string, error) {
 	var err error
 
 	if request.Name == "Image.Run" {
-		// result, err = Handlers.RequestToRunImage(client.ImageList[1])
 		result, err = Handlers.RequestToRunImage(string(request.Arguments["Image.Name"].(string)))
 		if err != nil {
 			log.Printf("Could not process a request %s", request.Name)
 			panic(err)
 		}
-	} else if request.Name == "Image.Pull" {
-		// TODO: this is just WRONG
-		var clientImageTags = []string{}
-		for _, clientImage := range client.ImageList {
-			clientImageTags = append(clientImageTags, clientImage.RepoTags[0])
+	} else if request.Name == "Image.Remove" {
+		// TODO: this is just WRONG // Need the mutex usage
+		result, err = Handlers.RequestToRemoveImage(request.Arguments["Image.ID"].(string))
+		if err != nil {
+			log.Printf("Could not process a request %s", request.Name)
+			panic(err)
 		}
-		result, err = Handlers.RequestToPullImage(clientImageTags)
+	} else if request.Name == "Image.Pull" {
+		// TODO: this is just WRONG // Need the mutex usage
+		result, err = Handlers.RequestToPullImage(request.Arguments["Image.Tag"].(string))
 		if err != nil {
 			log.Printf("Could not process a request %s", request.Name)
 			panic(err)
@@ -97,7 +101,7 @@ func PopRequest(client *Types.Client) (string, error) {
 
 func rpc(w http.ResponseWriter, r *http.Request) {
 	// Step 1: Create a connection
-	log.Printf("A new client connection established: %s ", r.URL)
+	log.Printf("RPC -> Connection : %s ", r.URL)
 	clientAddress := r.RemoteAddr
 	splitted := strings.Split(clientAddress, ":")
 	clientIP, clientPort := splitted[0], splitted[1]
@@ -147,6 +151,7 @@ func rpc(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			log.Print("Reading message error:", err)
+
 			break
 		}
 
@@ -158,8 +163,30 @@ func rpc(w http.ResponseWriter, r *http.Request) {
 
 }
 
-var ListOfClients = func(w http.ResponseWriter, r *http.Request) {
+var ListOfImages = func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	log.Printf("ListOfImages -> Called")
+	Handlers.UpdateLocalImageList()
+	imageList := Handlers.HostImageList
+	encoded, err := json.Marshal(imageList)
+	if err != nil {
+		errorResponse := Types.ApiResponseError{
+			Error: `Could not encode the list of images`,
+		}
+		encodedError, err := json.Marshal(errorResponse)
+		if err != nil {
+			log.Fatalf("Error encoding error")
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(encodedError))
+		return
+	}
+	w.Write(encoded)
+	return
+}
 
+var ListOfClients = func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	js, err := json.Marshal(Application.ClientMap.ClientList)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -170,6 +197,8 @@ var ListOfClients = func(w http.ResponseWriter, r *http.Request) {
 }
 
 var GetClient = func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	vars := mux.Vars(r)
 	uuidParsed, err := uuid.FromString(vars["uuid"])
 	if err != nil {
@@ -192,23 +221,30 @@ var GetClient = func(w http.ResponseWriter, r *http.Request) {
 	w.Write(js)
 }
 
+// ClientAddRequest adds a Request Structure for a client's queue
 var ClientAddRequest = func(w http.ResponseWriter, r *http.Request) {
+	log.Printf(`CliendAddAddress called`)
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 
 	vars := mux.Vars(r)
 	uuidParsed, err := uuid.FromString(vars["uuid"])
 	if err != nil {
+		log.Infof("Could not parse a UUID `%v`", vars["uuid"])
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Wrong UUID supplied"))
 		return
 	}
 	client, err := Application.ClientMap.ByUUID(uuidParsed)
-	log.Printf("THE client = %v", client)
 	if err != nil {
+		log.Infof("Client with UUID `%s` is not found", vars["uuid"])
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(fmt.Sprintf("404 - The client is not found by UUID: %s", uuidParsed)))
 		return
 	}
 
+	// Request Structure
 	rStructure := Types.RequestStructure{}
 	// Body decoding
 	var metaRS interface{}
@@ -217,6 +253,7 @@ var ClientAddRequest = func(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
+	// Convert to an interface
 	metaRSMap, ok := metaRS.(map[string]interface{})
 	if !ok {
 		log.Printf("The error converting RequestStructure: %s", err)
@@ -228,12 +265,22 @@ var ClientAddRequest = func(w http.ResponseWriter, r *http.Request) {
 	rStructure.Name = reqName
 	rStructure.Arguments = make(map[string]interface{})
 	log.Printf("The name = %s", reqName)
-	// reqArgs, ok := strstr["arguments"].(map[string]interface{})
-	for _, v := range metaRSMap["arguments"].([]interface{}) {
-		intt := v.(map[string]interface{})
-		log.Printf("Found the arg : %v", intt)
-		for k, v := range intt {
-			rStructure.Arguments[k] = v
+	argumentList, ok := metaRSMap["arguments"].([]interface{})
+	if !ok {
+		errorResponse := Types.ApiResponseError{
+			Error: `"arguments" field must be an array: "arguments": [{"key": "value", ...}]`,
+		}
+		encodedError, err := json.Marshal(errorResponse)
+		if err != nil {
+			log.Fatalf("Error encoding error")
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(encodedError))
+	}
+	for _, v := range argumentList {
+		arg := v.(map[string]interface{})
+		for argeKey, argValue := range arg {
+			rStructure.Arguments[argeKey] = argValue
 		}
 	}
 
@@ -242,24 +289,38 @@ var ClientAddRequest = func(w http.ResponseWriter, r *http.Request) {
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
-	log.Println("Got a connection")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+	log.Println("New connection detected")
 	homeTemplate.Execute(w, "ws://"+r.Host+"/rpc")
 }
 
 func main() {
 	flag.Parse()
-	log.SetFlags(0)
-	r := mux.NewRouter()
+	router := mux.NewRouter()
 
-	r.HandleFunc("/", home)
-	r.HandleFunc("/rpc", rpc)
-	r.HandleFunc("/api/client", ListOfClients)
-	r.HandleFunc("/api/client/{uuid}", GetClient)
-	r.HandleFunc("/api/client/{uuid}/request-queue", ClientAddRequest)
-	http.Handle("/", r)
+	router.HandleFunc("/", home).Methods("GET")
+	router.HandleFunc("/rpc", rpc)
+
+	// Images
+	router.HandleFunc("/api/image", ListOfImages).Methods("GET")
+
+	// Clients
+	router.HandleFunc("/api/client/{uuid}/request-queue", ClientAddRequest).Methods("POST")
+	router.HandleFunc("/api/client", ListOfClients).Methods("GET")
+	router.HandleFunc("/api/client/{uuid}", GetClient).Methods("GET")
+
+	// Requests
+	// router.HandleFunc("/api/client/{uuid}/request-queue/{requestUUID}", ClientHandleSingleRequest)
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"*"},
+	})
+	// c.allowedOriginsAll = true
+	handler := c.Handler(router)
+	// http.Handle("/", router)
 
 	log.Printf("DockerHost Server -> started at address %v", *address)
-	log.Fatal(http.ListenAndServe(*address, nil))
+	log.Fatal(http.ListenAndServe(*address, handler))
 }
 
 var homeTemplate = template.Must(template.New("").Parse(`

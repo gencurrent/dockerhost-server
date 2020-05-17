@@ -23,3 +23,13 @@ The DockerHost server to handle the docker stuff
 
 # Testing
 `go test -v`
+
+
+# Pulling image to a registry
+`docker pull $IMAGE`
+
+`docker tag $IMAGE 127.0.0.1:5000/$IMAGE`
+
+`docker push 127.0.0.1:5000/$IMAGE`
+
+`docker rmi $IMAGE`
